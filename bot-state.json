@@ -1,0 +1,64 @@
+{
+  "sessions": {
+    "1467098549367078995": {
+      "sessionId": "ea1dfb79-c19c-4c86-b2c2-bceb667ae106",
+      "categoryId": "1467098547718586509",
+      "channelId": "1467098549367078995",
+      "topicName": "클로드테스트",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T10:05:51.727Z",
+      "source": "discord",
+      "messageCount": 2
+    },
+    "1467104657867280489": {
+      "sessionId": "fec28b7a-7b27-4885-910f-0acf73f25c2b",
+      "categoryId": "1467104656101736560",
+      "channelId": "1467104657867280489",
+      "topicName": "클로드테스트2",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T10:30:08.072Z",
+      "source": "discord",
+      "messageCount": 2
+    },
+    "1467106494955651195": {
+      "sessionId": "026b8dfc-0bdf-404a-9c71-fc3553c3bd86",
+      "categoryId": "1467106493445832724",
+      "channelId": "1467106494955651195",
+      "topicName": "테스트3",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T10:37:26.081Z",
+      "source": "discord",
+      "messageCount": 1
+    },
+    "1467109100922863873": {
+      "sessionId": "e3b80ec5-c08e-46cf-9555-ec8eb4e9a45c",
+      "categoryId": "1467109098863595532",
+      "channelId": "1467109100922863873",
+      "topicName": "테스트4",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T10:47:47.547Z",
+      "source": "discord",
+      "messageCount": 2
+    },
+    "1467111092290588817": {
+      "sessionId": "06f3cc38-0293-46d7-84c0-9d8a971c8376",
+      "categoryId": "1467081742832631808",
+      "channelId": "1467111092290588817",
+      "topicName": "테스트",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T11:16:04.504Z",
+      "source": "discord",
+      "messageCount": 23
+    },
+    "1467139847079723008": {
+      "sessionId": "e39af779-4545-479f-b2f5-9c9c17cc518f",
+      "channelId": "1467139847079723008",
+      "topicName": "테스트채널2",
+      "projectPath": "/home/jade/claude-code/claude-discord",
+      "createdAt": "2026-01-31T12:52:35.886Z",
+      "messageCount": 6
+    }
+  },
+  "guildCwd": {},
+  "watchedDirs": []
+}
