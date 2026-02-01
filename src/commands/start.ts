@@ -27,7 +27,7 @@ export async function handleStart(
   const channel = interaction.channel as TextChannel;
   const topicName = channel.name;
   const sessionId = randomUUID();
-  const cwd = state.getCwd(guild.id) || config.defaultCwd;
+  const cwd = state.getCwd(interaction.channelId) || config.defaultCwd;
 
   const session = {
     sessionId,

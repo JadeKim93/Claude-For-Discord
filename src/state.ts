@@ -3,7 +3,7 @@ import type { BotState, SessionMapping } from "./types.js";
 
 const DEFAULT_STATE: BotState = {
   sessions: {},
-  guildCwd: {},
+  channelCwd: {},
 };
 
 /**
@@ -85,13 +85,13 @@ export class StateManager {
     }
   }
 
-  /** 길드별 기본 작업 디렉토리를 설정한다. */
-  setCwd(guildId: string, cwd: string): void {
-    this.state.guildCwd[guildId] = cwd;
+  /** 채널별 작업 디렉토리를 설정한다. */
+  setCwd(channelId: string, cwd: string): void {
+    this.state.channelCwd[channelId] = cwd;
     this.scheduleSave();
   }
 
-  getCwd(guildId: string): string | undefined {
-    return this.state.guildCwd[guildId];
+  getCwd(channelId: string): string | undefined {
+    return this.state.channelCwd[channelId];
   }
 }

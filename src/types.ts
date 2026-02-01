@@ -1,6 +1,6 @@
 export interface BotState {
   sessions: Record<string, SessionMapping>;
-  guildCwd: Record<string, string>;
+  channelCwd: Record<string, string>;
 }
 
 export interface SessionMapping {

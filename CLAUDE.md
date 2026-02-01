@@ -138,3 +138,4 @@ npx tsx src/index.ts # 개발 모드
 - 시스템 프롬프트 변경 시 빌드 재실행 필요
 - `getSessionUsage()`는 매 호출마다 JSONL 전체를 파싱하므로, 세션이 매우 길어지면 성능 저하 가능
 - guild commands로 등록하므로 즉시 반영됨 (global commands와 달리 캐시 지연 없음)
+- 기본적으로 .gitignore 에 해당하는 파일 리스트는 수정 대상이 아님. 특별히 지시자가 현재 세팅에 대해 요청한 것이 아니라면, 이 외의 파일을 수정할 것

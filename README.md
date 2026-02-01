@@ -176,10 +176,9 @@ cp env/bot-state.json env/bot-state.json.bak
 1. 봇 실행
 2. /cwd path:/home/jade/my-project   ← 작업 디렉토리 설정
 3. 원하는 채널에서 /start             ← 세션 시작 (채널 이름이 주제)
-4. 인증 모듈 분석해줘                   ← Claude에게 메시지 전달
-5. Claude 응답 수신
-6. 선택지가 있으면 이모지 버튼으로 선택
-7. /stop                             ← 세션 종료
+4. 시작된 채털에서 claude code 와 문답
+5. 선택지가 있으면 이모지 버튼으로 선택
+6. /stop                             ← 세션 종료
 ```
 
 ## 기능 상세

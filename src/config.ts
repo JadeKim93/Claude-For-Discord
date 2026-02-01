@@ -74,7 +74,13 @@ export const config = {
     ? file.claude.path.replace(/^~/, os.homedir())
     : "claude",
   claudeTimeout: file.claude.timeoutMs || 600_000,
-  defaultCwd: (file.cwd.default || process.cwd()).replace(/^~/, os.homedir()),
+  defaultCwd: (() => {
+    const dir = (file.cwd.default || process.cwd()).replace(/^~/, os.homedir());
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  })(),
   cwdWhitelist: file.cwd.whitelist ?? [],
   cwdBlacklist: file.cwd.blacklist ?? [],
   sessionTokenLimit: file.session.tokenLimit ?? 0,

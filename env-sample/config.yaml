@@ -20,7 +20,7 @@ claude:
 
 # 작업 디렉토리 설정
 cwd:
-  default: "~/projects"
+  default: "~/.claude/claude-discord"
   # 화이트리스트 (빈 배열이면 전체 접근 가능)
   whitelist: []
   # whitelist:
