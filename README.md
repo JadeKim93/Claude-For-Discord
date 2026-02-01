@@ -1,5 +1,7 @@
 # Claude Code Discord Bot
 
+![테스트이미지](./example.png)
+
 Claude Code CLI를 Discord에서 제어하는 봇. 채널 단위로 세션을 관리하며, 재시작 후에도 세션이 유지된다.
 
 ## Quick Start (Docker Compose)
