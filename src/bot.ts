@@ -7,15 +7,16 @@ import {
   type TextChannel,
   type Guild,
 } from "discord.js";
+import { spawn } from "child_process";
 import { config } from "./config.js";
 import { runClaude } from "./claude.js";
-import { dispatchCommand, generateHelpText } from "./commands/index.js";
+import { registerSlashCommands, dispatchInteraction, generateHelpText } from "./commands/index.js";
 import { sendLongMessage } from "./channels/messageSender.js";
 import { handleChoices } from "./interactions/reactionHandler.js";
-import { getSessionUsage } from "./utils.js";
 import type { StateManager } from "./state.js";
 import type { SessionMapping } from "./types.js";
 
+/** 구조화된 I/O 로그를 출력한다. 200자 초과 시 미리보기로 잘림. */
 function logIO(direction: "IN" | "OUT", channel: string, author: string, content: string): void {
   const ts = new Date().toISOString();
   const preview = content.length > 200 ? content.slice(0, 200) + "..." : content;
@@ -24,12 +25,18 @@ function logIO(direction: "IN" | "OUT", channel: string, author: string, content
 
 const ALERT_CHANNEL_NAME = "서버-알람";
 const GUIDE_CHANNEL_NAME = "서버-안내";
+const ADMIN_CHANNEL_NAME = "서버-관리자";
 
-const TOKEN_ALERT_THRESHOLDS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 98, 100];
-
-// Cached alert channel reference
+// Cached channel references
 let alertChannel: TextChannel | null = null;
+let adminChannel: TextChannel | null = null;
 
+/**
+ * Discord 클라이언트를 생성하고 이벤트 핸들러를 등록한다.
+ * - ready: 슬래시 명령어 등록 + 시스템 채널 초기화
+ * - interactionCreate: 슬래시 명령어 디스패치 (권한 검증 포함)
+ * - messageCreate: 세션 채널 메시지를 Claude에 전달 (토큰 한도 체크)
+ */
 export function createBot(state: StateManager): Client {
   const client = new Client({
     intents: [
@@ -43,18 +50,38 @@ export function createBot(state: StateManager): Client {
   client.once("ready", async () => {
     console.log(`Logged in as ${client.user?.tag}`);
 
-    const guild = client.guilds.cache.get(config.guildId);
-    if (!guild) {
-      console.error(`Guild ${config.guildId} not found`);
+    for (const guildId of config.guildIds) {
+      const guild = client.guilds.cache.get(guildId);
+      if (!guild) {
+        console.error(`Guild ${guildId} not found`);
+        continue;
+      }
+
+      await registerSlashCommands(guild);
+      await ensureSystemChannels(guild, client);
+    }
+  });
+
+  // Slash command handling
+  client.on("interactionCreate", async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (!interaction.guild || !config.guildIds.includes(interaction.guild.id)) return;
+
+    if (
+      config.allowedUserIds &&
+      !config.allowedUserIds.includes(interaction.user.id)
+    ) {
+      await interaction.reply({ content: "권한이 없습니다.", ephemeral: true });
       return;
     }
 
-    await ensureSystemChannels(guild, client);
+    await dispatchInteraction(interaction, state);
   });
 
+  // Session message handling (plain messages in session channels)
   client.on("messageCreate", async (message: Message) => {
     if (message.author.bot) return;
-    if (message.guild?.id !== config.guildId) return;
+    if (!message.guild || !config.guildIds.includes(message.guild.id)) return;
 
     if (
       config.allowedUserIds &&
@@ -63,27 +90,9 @@ export function createBot(state: StateManager): Client {
       return;
     }
 
-    // Try command dispatch first
-    if (message.content.startsWith("!")) {
-      const handled = await dispatchCommand(message, state);
-      if (handled) return;
-    }
-
     // Check if message is in a session channel
     const session = state.getSessionByChannelId(message.channel.id);
     if (session) {
-      // Block if over token limit (read from JSONL)
-      if (config.sessionTokenLimit > 0) {
-        const usage = await getSessionUsage(session.sessionId, session.projectPath);
-        const total = usage.inputTokens + usage.outputTokens;
-        if (total >= config.sessionTokenLimit) {
-          await message.reply(
-            `토큰 한도를 초과했습니다 (${total.toLocaleString()} / ${config.sessionTokenLimit.toLocaleString()}).`,
-          );
-          return;
-        }
-      }
-
       await handleSessionMessage(message, session, state);
     }
   });
@@ -91,11 +100,56 @@ export function createBot(state: StateManager): Client {
   return client;
 }
 
+/** 서버-알람, 서버-안내, 서버-관리자 채널이 존재하는지 확인하고 없으면 생성한다. */
 async function ensureSystemChannels(guild: Guild, client: Client): Promise<void> {
+  await ensureAdminChannel(guild, client);
   await ensureAlertChannel(guild, client);
   await ensureGuideChannel(guild, client);
+
+  // CLI 상태 점검 후 관리자/알람 채널에 보고
+  const status = await checkClaudeCliStatus();
+  if (status.available) {
+    adminChannel?.send(`✅ Claude CLI 정상 (${status.version})`);
+    alertChannel?.send("**Claude For Discord Now Online**");
+  } else {
+    adminChannel?.send(
+      `⚠️ **Claude CLI 사용 불가**\n${status.error}\n\n` +
+      `API 키 발급: https://console.anthropic.com/settings/keys\n` +
+      `\`config.yaml\`의 \`claude.apiKey\` 또는 환경변수 \`ANTHROPIC_API_KEY\`를 설정한 뒤 재시작하세요.`,
+    );
+    alertChannel?.send("⚠️ **Claude CLI 사용 불가** — 서버-관리자 채널을 확인하세요.");
+  }
 }
 
+/** 서버-관리자 채널을 확보한다. 관리자만 열람 가능. */
+async function ensureAdminChannel(guild: Guild, client: Client): Promise<void> {
+  let channel = guild.channels.cache.find(
+    (ch) => ch.name === ADMIN_CHANNEL_NAME && ch.type === ChannelType.GuildText,
+  ) as TextChannel | undefined;
+
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: ADMIN_CHANNEL_NAME,
+      type: ChannelType.GuildText,
+      topic: "Claude Code Bot 관리자 채널",
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel],
+        },
+        {
+          id: client.user!.id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
+        },
+      ],
+    });
+    console.log(`Created admin channel: #${ADMIN_CHANNEL_NAME}`);
+  }
+
+  adminChannel = channel;
+}
+
+/** 서버-알람 채널을 확보한다. 유저 채팅 불가. */
 async function ensureAlertChannel(guild: Guild, client: Client): Promise<void> {
   let channel = guild.channels.cache.find(
     (ch) => ch.name === ALERT_CHANNEL_NAME && ch.type === ChannelType.GuildText,
@@ -122,9 +176,47 @@ async function ensureAlertChannel(guild: Guild, client: Client): Promise<void> {
   }
 
   alertChannel = channel;
-  await channel.send("**Claude For Discord Now Online**");
 }
 
+/**
+ * Claude CLI 사용 가능 여부를 확인한다.
+ * 1. --version으로 바이너리 존재 확인
+ * 2. 간단한 프롬프트 실행으로 인증 상태 확인 (API 키 또는 OAuth)
+ */
+async function checkClaudeCliStatus(): Promise<{ available: boolean; version?: string; error?: string }> {
+  // 1. 바이너리 존재 확인
+  const version = await new Promise<string | null>((resolve) => {
+    const proc = spawn(config.claudePath, ["--version"], {
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    proc.stdout.on("data", (data: Buffer) => { stdout += data.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", (code) => {
+      resolve(code === 0 ? stdout.trim().split("\n")[0] : null);
+    });
+  });
+
+  if (!version) {
+    return { available: false, error: "CLI를 찾을 수 없습니다." };
+  }
+
+  // 2. 실제 실행으로 인증 확인
+  const testResult = await runClaude({
+    prompt: "Reply with only: ok",
+    cwd: config.defaultCwd,
+  });
+
+  if (testResult.success) {
+    return { available: true, version };
+  }
+
+  return { available: false, version, error: `CLI 확인됨 (${version}), 하지만 인증에 실패했습니다.\n${testResult.output}` };
+}
+
+/** 서버-안내 채널을 확보하고, 기존 메시지를 삭제한 뒤 도움말을 게시한다. */
 async function ensureGuideChannel(guild: Guild, client: Client): Promise<void> {
   let channel = guild.channels.cache.find(
     (ch) => ch.name === GUIDE_CHANNEL_NAME && ch.type === ChannelType.GuildText,
@@ -166,49 +258,17 @@ async function ensureGuideChannel(guild: Guild, client: Client): Promise<void> {
   await channel.send(generateHelpText());
 }
 
-// --- Token alert helpers ---
-
-async function checkTokenAlerts(
-  session: SessionMapping,
-  state: StateManager,
-): Promise<void> {
-  if (config.sessionTokenLimit <= 0) return;
-
-  const usage = await getSessionUsage(session.sessionId, session.projectPath);
-  const total = usage.inputTokens + usage.outputTokens;
-  const percent = Math.floor((total / config.sessionTokenLimit) * 100);
-  const prevPercent = session.lastAlertPercent ?? 0;
-
-  for (const threshold of TOKEN_ALERT_THRESHOLDS) {
-    if (percent >= threshold && prevPercent < threshold) {
-      if (threshold >= 100) {
-        sendAlertMessage(
-          `**토큰 한도 초과** — #${session.topicName}\n` +
-          `사용량: ${total.toLocaleString()} / ${config.sessionTokenLimit.toLocaleString()} (${percent}%)`,
-        );
-      } else {
-        sendAlertMessage(
-          `**토큰 사용량 ${threshold}%** — #${session.topicName}\n` +
-          `사용량: ${total.toLocaleString()} / ${config.sessionTokenLimit.toLocaleString()}`,
-        );
-      }
-    }
-  }
-
-  if (percent !== prevPercent) {
-    state.updateSessionAlertPercent(session.channelId, percent);
-  }
-}
-
-function sendAlertMessage(content: string): void {
-  if (!alertChannel) return;
-  alertChannel.send(content).catch((err) => {
-    console.error("Failed to send alert:", err);
-  });
-}
-
-// --- Session message handler ---
-
+/**
+ * 유저 메시지를 Claude에 전달하고 응답을 채널에 전송한다.
+ * promptOverride가 있으면 메시지 내용 대신 해당 텍스트를 사용 (선택지 재귀 호출용).
+ *
+ * 1. 타이핑 인디케이터 + ⏳ 리액션 표시
+ * 2. Claude CLI 호출 (messageCount로 resume 여부 판단)
+ * 3. 메시지 카운트 증가, ⏳ 제거
+ * 4. 응답을 sendLongMessage로 전송
+ * 5. 토큰 알림 체크
+ * 6. 응답에 선택지가 있으면 리액션 추가, 선택 시 재귀 호출
+ */
 async function handleSessionMessage(
   message: Message,
   session: SessionMapping,
@@ -219,12 +279,14 @@ async function handleSessionMessage(
   const prompt = (promptOverride ?? message.content).trim();
   if (!prompt) return;
 
+  // 1. 타이핑 + 대기 리액션
   logIO("IN", channel.name, message.author.tag, prompt);
 
   await channel.sendTyping();
   await message.react("⏳");
 
   try {
+    // 2. Claude CLI 호출
     const isResume = session.messageCount > 0;
     const result = await runClaude({
       prompt,
@@ -233,6 +295,7 @@ async function handleSessionMessage(
       cwd: session.projectPath,
     });
 
+    // 3. 메시지 카운트 증가, ⏳ 제거
     state.updateSessionMessageCount(
       session.channelId,
       session.messageCount + 1,
@@ -244,19 +307,14 @@ async function handleSessionMessage(
       ? result.output
       : `Error: ${result.output}`;
 
+    // 4. 응답 전송
     logIO("OUT", channel.name, "Claude", response);
 
     const sentMessages = await sendLongMessage(channel, response, {
       replyTo: message,
     });
 
-    // Check token alerts after response (reads JSONL for absolute usage)
-    await checkTokenAlerts(
-      state.getSessionByChannelId(session.channelId)!,
-      state,
-    );
-
-    // Check for choices in the response (reactions on last response message)
+    // 5. 선택지 감지 → 리액션 추가 → 선택 시 재귀 호출
     if (result.success) {
       const lastMsg = sentMessages[sentMessages.length - 1];
       const choice = await handleChoices(response, lastMsg);

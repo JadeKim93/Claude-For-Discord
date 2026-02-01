@@ -5,14 +5,14 @@ import type { TextChannel } from "discord.js";
 import { config } from "./config.js";
 import type { SessionMapping, SessionUsage } from "./types.js";
 
-/** Encode a directory path for Claude's projects directory structure. */
+/** 디렉토리 경로를 Claude의 projects 디렉토리명으로 변환한다. "/home/jade" → "-home-jade" */
 export function encodeProjectPath(dirPath: string): string {
-  return dirPath.replace(/\//g, "-").replace(/^-/, "");
+  return dirPath.replace(/\//g, "-");
 }
 
 const PIN_TAG = "[claude-bot-status]";
 
-/** Build a status message string for a session. */
+/** 채널에 고정할 세션 상태 메시지를 생성한다. PIN_TAG로 시작하여 식별 가능. */
 export function buildStatusMessage(session: SessionMapping): string {
   return [
     PIN_TAG,
@@ -22,7 +22,7 @@ export function buildStatusMessage(session: SessionMapping): string {
   ].join("\n");
 }
 
-/** Remove any bot-pinned status messages from the channel. */
+/** 채널의 고정 메시지 중 봇이 작성한 상태 메시지를 모두 삭제한다. */
 export async function removeStatusPin(
   channel: TextChannel,
   botUserId: string,
@@ -39,10 +39,7 @@ export async function removeStatusPin(
   }
 }
 
-/**
- * Pin (or update) a status message in the channel.
- * Removes any previous bot-pinned status message first.
- */
+/** 기존 상태 고정 메시지를 삭제하고 새 상태 메시지를 전송·고정한다. */
 export async function pinStatusMessage(
   channel: TextChannel,
   session: SessionMapping,
@@ -54,8 +51,11 @@ export async function pinStatusMessage(
 }
 
 /**
- * Read a session's JSONL file and sum all usage from assistant messages.
- * Returns the absolute total token usage for the session.
+ * Claude CLI의 JSONL 세션 파일을 읽어 누적 토큰 사용량을 반환한다.
+ * 매 호출마다 전체 파일을 스트리밍 파싱하므로, 세션이 길면 비용 증가.
+ *
+ * 경로: ~/.claude/projects/{encoded-cwd}/{sessionId}.jsonl
+ * assistant 메시지의 usage에서 input/cache/output 토큰을 합산.
  */
 export async function getSessionUsage(
   sessionId: string,
@@ -84,8 +84,7 @@ export async function getSessionUsage(
       if (obj?.type === "assistant" && msg?.usage) {
         usage.inputTokens +=
           (msg.usage.input_tokens ?? 0) +
-          (msg.usage.cache_creation_input_tokens ?? 0) +
-          (msg.usage.cache_read_input_tokens ?? 0);
+          (msg.usage.cache_creation_input_tokens ?? 0);
         usage.outputTokens += msg.usage.output_tokens ?? 0;
       }
     } catch {

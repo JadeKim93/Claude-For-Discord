@@ -1,7 +1,9 @@
 # Discord 설정
 discord:
   token: "봇_토큰"
-  guildId: "서버_ID"
+  guildIds: [
+    "서버_ID"
+  ]
   # 허용할 사용자 ID 목록 (빈 배열이면 전체 허용)
   allowedUserIds: []
   # allowedUserIds:
@@ -11,18 +13,19 @@ discord:
 # Claude CLI 설정
 claude:
   model: null                    # 모델 지정 (null이면 기본값, 예: "claude-sonnet-4-20250514")
-  path: "/home/jade/.local/bin/claude"
+  apiKey: "your_api_key"         # Anthropic API 키 (null이면 환경변수 ANTHROPIC_API_KEY 사용)
+  path: null                     # Claude CLI 경로 (null이면 PATH에서 검색)
   timeoutMs: 600000              # CLI 타임아웃 (ms)
   maxBudgetUsd: null             # 턴당 최대 비용 (USD, 예: "1.00")
 
 # 작업 디렉토리 설정
 cwd:
-  default: "/home/jade/projects"
+  default: "~/projects"
   # 화이트리스트 (빈 배열이면 전체 접근 가능)
   whitelist: []
   # whitelist:
-  #   - "/home/jade/projects"
-  #   - "/home/jade/work"
+  #   - "/home/user-name/projects"
+  #   - "/home/user-name/work"
   # 블랙리스트 (항상 우선 적용)
   blacklist:
     - "/etc"
@@ -34,4 +37,4 @@ session:
   renewalHours: 24               # 토큰 리셋 주기 (시간)
 
 # 상태 파일 경로
-stateFilePath: "./bot-state.json"
+stateFilePath: "./env/bot-state.json"

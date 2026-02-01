@@ -1,0 +1,34 @@
+services:
+  claude-discord:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./env:/app/env
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/projects:/root/projects
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# --- 다른 컨테이너와 함께 사용할 경우 --- 
+# 아래 주석을 해제하여 독자 네트워크를 선언한다.
+# 여러 docker-compose 파일에서 동일 네트워크를 공유하려면
+# external: true로 변경하고 `docker network create claude-net`으로 미리 생성한다.
+#
+# networks:
+#   claude-net:
+#     driver: bridge
+#
+# 다른 docker-compose 파일에서 해당 네트워크에 접근하고 싶으면 다음과 같이 추가한다:
+# 그리고 서비스에 네트워크를 아래와 같이 연결한다:
+#
+# networks:
+#   claude-net:
+#     external: true
+#
+# services: 
+#   claude-discord: # 추가할 container  
+#     networks:
+#       - claude-net

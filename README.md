@@ -2,6 +2,25 @@
 
 Claude Code CLI를 Discord에서 제어하는 봇. 채널 단위로 세션을 관리하며, 재시작 후에도 세션이 유지된다.
 
+## Quick Start (Docker Compose)
+
+```bash
+# 1. env-sample을 env로 복사
+cp -r env-sample env
+# env/config.yaml에 Discord 토큰, 서버 ID 등을 입력한다.
+
+# 2. 실행
+docker compose build --no-cache
+docker compose up -d
+
+# 로그 확인
+docker compose logs -f
+```
+
+> `env/` 폴더에 `config.yaml`과 `bot-state.json`이 관리된다. 볼륨 마운트 경로(`~/.claude`, `~/projects`)는 `docker-compose.yml`에서 환경에 맞게 수정한다.
+
+---
+
 ## 요구사항
 
 - Node.js 20+
@@ -16,17 +35,18 @@ npm install
 
 ## 설정
 
-`config.example.yaml`을 `config.yaml`로 복사한 뒤 값을 채운다:
+`env-sample/`을 `env/`로 복사한 뒤 값을 채운다:
 
 ```bash
-cp config.example.yaml config.yaml
+cp -r env-sample env
 ```
 
 ```yaml
 # Discord 설정
 discord:
   token: "봇_토큰"
-  guildId: "서버_ID"
+  guildIds:
+    - "서버_ID"
   allowedUserIds: []           # 빈 배열이면 전체 허용
 
 # Claude CLI 설정
@@ -50,13 +70,13 @@ session:
   renewalHours: 24             # 토큰 리셋 주기 (시간)
 
 # 상태 파일 경로
-stateFilePath: "./bot-state.json"
+stateFilePath: "./env/bot-state.json"
 ```
 
 | 설정 | 필수 | 설명 |
 |------|------|------|
 | `discord.token` | O | Discord 봇 토큰 |
-| `discord.guildId` | O | 봇이 동작할 서버 ID |
+| `discord.guildIds` | O | 봇이 동작할 서버 ID 배열 |
 | `discord.allowedUserIds` | X | 허용할 사용자 ID 배열 (빈 배열이면 전체 허용) |
 | `claude.model` | X | Claude 모델 지정 |
 | `claude.maxBudgetUsd` | X | 턴당 최대 비용 제한 (USD) |
@@ -67,7 +87,7 @@ stateFilePath: "./bot-state.json"
 | `cwd.blacklist` | X | 차단 경로 배열 (화이트리스트보다 우선) |
 | `session.tokenLimit` | X | 세션별 최대 토큰 수 (0이면 무제한) |
 | `session.renewalHours` | X | 토큰 리셋 주기 (기본: 24시간) |
-| `stateFilePath` | X | 상태 파일 경로 (기본: `./bot-state.json`) |
+| `stateFilePath` | X | 상태 파일 경로 (기본: `./env/bot-state.json`) |
 
 ## 실행
 
@@ -112,50 +132,23 @@ pm2 stop claude-discord     # 중지
 pm2 delete claude-discord   # PM2에서 제거
 ```
 
-### Docker로 실행
-
-Dockerfile을 생성한 뒤:
+### Docker Compose로 실행 (권장)
 
 ```bash
-# 이미지 빌드
-docker build -t claude-discord .
-
-# 실행
-docker run -d \
-  --name claude-discord \
-  --restart unless-stopped \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  -v /home/jade/.claude:/home/node/.claude \
-  -v /home/jade/projects:/home/node/projects \
-  -v $(pwd)/bot-state.json:/app/bot-state.json \
-  claude-discord
+docker compose up -d
 ```
 
-볼륨 마운트 설명:
-- `config.yaml` — 설정 파일 (읽기 전용)
-- `/home/jade/.claude` — Claude CLI 설정 및 세션 데이터
-- `/home/jade/projects` — 작업 디렉토리 (CWD로 사용할 경로)
-- `bot-state.json` — 봇 상태 파일 (세션 매핑 유지)
+`docker-compose.yml`의 볼륨 마운트를 환경에 맞게 수정한다:
 
-Docker Compose:
-
-```yaml
-services:
-  claude-discord:
-    build: .
-    restart: unless-stopped
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - /home/jade/.claude:/home/node/.claude
-      - /home/jade/projects:/home/node/projects
-      - ./bot-state.json:/app/bot-state.json
-```
+- `env/` — 설정 파일(`config.yaml`)과 상태 파일(`bot-state.json`)
+- `~/.claude` — Claude CLI 설정 및 세션 데이터
+- `~/projects` — 작업 디렉토리 (CWD로 사용할 경로)
 
 ## 세션 영속성
 
-봇은 `bot-state.json` 파일에 세션 매핑을 저장한다. 이 파일이 유지되는 한 봇을 재시작하거나 시스템을 재부팅해도 세션이 보존된다.
+봇은 `env/bot-state.json` 파일에 세션 매핑을 저장한다. 이 파일이 유지되는 한 봇을 재시작하거나 시스템을 재부팅해도 세션이 보존된다.
 
-- `!start`로 시작한 세션은 즉시 `bot-state.json`에 기록된다.
+- `/start`로 시작한 세션은 즉시 `env/bot-state.json`에 기록된다.
 - 봇 종료 시 (`SIGINT`/`SIGTERM`) 상태를 즉시 저장한다.
 - 재시작 후 동일 채널에서 메시지를 보내면 이전 세션이 자동으로 이어진다.
 - Claude CLI의 `--resume` 플래그를 사용하여 대화 맥락을 복원한다.
@@ -163,39 +156,39 @@ services:
 상태 파일을 백업하려면:
 
 ```bash
-cp bot-state.json bot-state.json.bak
+cp env/bot-state.json env/bot-state.json.bak
 ```
 
 ## 명령어
 
 | 명령어 | 설명 |
 |--------|------|
-| `!start` | 현재 채널에서 Claude 세션을 시작한다 (채널 이름 = 주제). |
-| `!stop` | 현재 채널의 세션을 종료한다. |
-| `!cwd <경로>` | 작업 디렉토리를 변경한다. 인자 없으면 현재 경로 확인. |
-| `!help` | 도움말을 표시한다. |
+| `/start` | 현재 채널에서 Claude 세션을 시작한다 (채널 이름 = 주제). |
+| `/stop` | 현재 채널의 세션을 종료한다. |
+| `/cwd path:<경로>` | 작업 디렉토리를 변경한다. 인자 없으면 현재 경로 확인. |
+| `/help` | 도움말을 표시한다. |
 
 ## 사용 흐름
 
 ```
 1. 봇 실행
-2. !cwd /home/jade/my-project     ← 작업 디렉토리 설정
-3. 원하는 채널에서 !start          ← 세션 시작 (채널 이름이 주제)
-4. 인증 모듈 분석해줘                ← Claude에게 메시지 전달
+2. /cwd path:/home/jade/my-project   ← 작업 디렉토리 설정
+3. 원하는 채널에서 /start             ← 세션 시작 (채널 이름이 주제)
+4. 인증 모듈 분석해줘                   ← Claude에게 메시지 전달
 5. Claude 응답 수신
 6. 선택지가 있으면 이모지 버튼으로 선택
-7. !stop                          ← 세션 종료
+7. /stop                             ← 세션 종료
 ```
 
 ## 기능 상세
 
 ### 채널 기반 세션
 
-`!start`로 세션을 시작하면 Discord 채널 이름이 세션 주제가 된다. 세션이 활성화된 채널에서는 일반 메시지가 Claude에게 전달되며, 대화 맥락이 유지된다. `!start` 전에는 메시지에 개입하지 않는다.
+`/start`로 세션을 시작하면 Discord 채널 이름이 세션 주제가 된다. 세션이 활성화된 채널에서는 일반 메시지가 Claude에게 전달되며, 대화 맥락이 유지된다. `/start` 전에는 메시지에 개입하지 않는다.
 
 ### 고정 메시지
 
-세션 시작 시 채널에 상태 메시지가 고정된다 (Session ID, CWD, 시작 시간). CWD 변경 시 자동 갱신되고, `!stop` 시 삭제된다.
+세션 시작 시 채널에 상태 메시지가 고정된다 (Session ID, CWD, 시작 시간). CWD 변경 시 자동 갱신되고, `/stop` 시 삭제된다.
 
 ### 시스템 채널
 
@@ -206,7 +199,7 @@ cp bot-state.json bot-state.json.bak
 
 ### CWD 화이트리스트/블랙리스트
 
-`config.yaml`의 `cwd.whitelist`와 `cwd.blacklist`로 `!cwd` 명령어에서 접근 가능한 경로를 제한한다.
+`config.yaml`의 `cwd.whitelist`와 `cwd.blacklist`로 `/cwd` 명령어에서 접근 가능한 경로를 제한한다.
 
 - **화이트리스트가 빈 배열**: 모든 경로 접근 가능 (블랙리스트만 적용)
 - **화이트리스트에 경로 지정**: 해당 경로의 하위 디렉토리만 허용
@@ -297,14 +290,17 @@ src/
   utils.ts                  — 경로 인코딩, 고정 메시지 유틸
   bot.ts                    — Discord 클라이언트, 이벤트 라우팅, 토큰 알림
   commands/
-    index.ts                — 커맨드 레지스트리 & 디스패처
-    start.ts                — !start
-    stop.ts                 — !stop
-    setCwd.ts               — !cwd (화이트/블랙리스트 검증)
+    index.ts                — 슬래시 명령어 레지스트리 & 디스패처
+    start.ts                — /start
+    stop.ts                 — /stop
+    setCwd.ts               — /cwd (화이트/블랙리스트 검증)
   channels/
     messageSender.ts        — 2000자 분할, 파일 첨부
   interactions/
     reactionHandler.ts      — 이모지 선택지
-config.yaml                 — 봇 설정 (gitignore)
-config.example.yaml         — 설정 예제
+env/                          — 환경 파일 (gitignore)
+  config.yaml               — 봇 설정
+  bot-state.json            — 상태 파일 (자동 생성)
+env-sample/                   — 설정 예제 (git 포함)
+  config.yaml               — config.yaml 샘플
 ```

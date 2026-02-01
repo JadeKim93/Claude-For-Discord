@@ -8,8 +8,11 @@ const NUMBERED_LINE =
   /^\s*(?:[-*]\s*)?(?:\*{0,2})(\d+)[.)]\*{0,2}\s+(.+)$/;
 
 /**
- * Detect numbered choices in Claude's response, add emoji reactions
- * to the response message, and wait for user selection.
+ * Claude 응답에서 번호 선택지를 감지하고 이모지 리액션으로 유저 선택을 받는다.
+ * 1. parseChoices로 마지막 연속 번호 블록 추출
+ * 2. 응답 메시지에 숫자 이모지 리액션 추가
+ * 3. 유저가 리액션을 누르면 해당 선택지 텍스트를 반환
+ * 4. 타임아웃 시 메시지에 "선택 시간 초과"를 편집으로 기록
  */
 export async function handleChoices(
   responseText: string,
@@ -67,7 +70,8 @@ export async function handleChoices(
 }
 
 /**
- * Parse numbered choices from the LAST contiguous numbered block in the text.
+ * 텍스트에서 마지막 연속 번호 블록을 파싱하여 선택지 배열로 반환한다.
+ * "1. ...", "2) ..." 등의 패턴을 인식하며, 번호가 끊기면 새 블록으로 처리.
  */
 function parseChoices(text: string): string[] {
   const lines = text.split("\n");

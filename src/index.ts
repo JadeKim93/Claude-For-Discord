@@ -7,6 +7,7 @@ state.load();
 
 const client = createBot(state);
 
+/** SIGINT/SIGTERM 수신 시 상태를 즉시 저장하고 Discord 클라이언트를 정리한 뒤 종료한다. */
 function shutdown(): void {
   console.log("Shutting down...");
   state.saveImmediate();
