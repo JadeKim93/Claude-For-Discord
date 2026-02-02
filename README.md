@@ -55,7 +55,6 @@ discord:
 claude:
   model: null                  # 모델 지정 (null이면 기본값)
   path: "/home/jade/.local/bin/claude"
-  timeoutMs: 600000
   maxBudgetUsd: null           # 턴당 최대 비용 (USD)
 
 # 작업 디렉토리 설정
@@ -83,7 +82,6 @@ stateFilePath: "./env/bot-state.json"
 | `claude.model` | X | Claude 모델 지정 |
 | `claude.maxBudgetUsd` | X | 턴당 최대 비용 제한 (USD) |
 | `claude.path` | X | Claude CLI 경로 |
-| `claude.timeoutMs` | X | CLI 타임아웃 ms (기본: 600000) |
 | `cwd.default` | X | 기본 작업 디렉토리 |
 | `cwd.whitelist` | X | 허용 경로 배열 (빈 배열이면 전체 허용) |
 | `cwd.blacklist` | X | 차단 경로 배열 (화이트리스트보다 우선) |
@@ -177,8 +175,9 @@ cp env/bot-state.json env/bot-state.json.bak
 2. /cwd path:/home/jade/my-project   ← 작업 디렉토리 설정
 3. 원하는 채널에서 /start             ← 세션 시작 (채널 이름이 주제)
 4. 시작된 채털에서 claude code 와 문답
-5. 선택지가 있으면 이모지 버튼으로 선택
-6. /stop                             ← 세션 종료
+5. 권한 요청 시 Allow/Deny 버튼으로 승인 (또는 자동 승인 토글)
+6. 선택지가 있으면 번호 버튼으로 선택
+7. /stop                             ← 세션 종료
 ```
 
 ## 기능 상세
@@ -221,9 +220,18 @@ cp env/bot-state.json env/bot-state.json.bak
 - 6000자 이하: 여러 메시지로 분할
 - 6000자 초과: 미리보기 + `response.md` 파일 첨부
 
-### 이모지 선택지
+### 권한 요청 및 자동 승인
 
-Claude가 번호 목록 형태의 선택지를 제시하면 응답 메시지에 숫자 이모지(1~9) 리액션이 추가된다. 이모지를 클릭하면 해당 선택이 Claude에게 자동 전달되고, 선택 결과가 메시지에 편집으로 남는다. 120초 내 선택하지 않으면 시간 초과 처리된다.
+Claude가 도구를 사용하려 할 때 Discord 버튼(✅ Allow / ❌ Deny)으로 승인/거부할 수 있다. 응답 대기 메시지에는 **"🔓 모든 요청 허용하기"** 토글 버튼이 함께 표시된다:
+
+- **모든 요청 확인하기** (기본): 매 권한 요청마다 유저에게 승인/거부를 묻는다
+- **모든 요청 허용하기**: 권한 요청을 자동으로 승인한다 (요청 내역은 채널과 로그에 동일하게 기록)
+
+토글 상태는 현재 처리 중인 요청에만 적용되며, 새 메시지마다 "모든 요청 확인하기"로 초기화된다. 모든 권한 요청과 유저 선택은 `[PERM_REQ]`/`[PERM_RES]` 태그로 콘솔에 기록된다.
+
+### 번호 선택지
+
+Claude가 번호 목록 형태의 선택지를 제시하면 응답 메시지에 숫자 버튼(1~9)이 추가된다. 버튼을 클릭하면 해당 선택이 Claude에게 자동 전달되고, 선택 결과가 메시지에 기록된다. 120초 내 선택하지 않으면 시간 초과 처리된다.
 
 ### 시스템 프롬프트 커스터마이징
 
@@ -257,13 +265,13 @@ npx tsc && pm2 restart claude-discord
 이 봇은 Discord 메시지를 Claude Code CLI에 `--print` 모드로 중계하는 구조이다. 이로 인해 다음과 같은 한계가 있다:
 
 - **단방향 프롬프트 모드**: Claude Code의 대화형(interactive) 기능을 사용할 수 없다. 매 메시지가 독립적인 `--print` 호출이며, `--resume`으로 세션 맥락만 유지한다.
-- **도구 승인 불가**: Discord 환경에서는 Claude가 도구(tool) 사용 전 사용자에게 승인을 요청하는 인터랙션이 불가능하다. 이 때문에 `--dangerously-skip-permissions` 플래그를 사용하여 모든 도구 실행을 자동 승인한다.
-- **실시간 스트리밍 없음**: `--print` 모드는 전체 응답이 완료된 후 한 번에 출력된다. 응답 생성 중간 과정을 실시간으로 볼 수 없다.
+- **도구 승인**: Discord 버튼으로 도구 사용 승인/거부가 가능하다. "모든 요청 허용하기" 토글로 자동 승인 모드를 활성화할 수도 있다.
+- **실시간 스트리밍 없음**: 전체 응답이 완료된 후 한 번에 출력된다. 응답 생성 중간 과정을 실시간으로 볼 수 없다.
 - **파일 첨부 미지원**: Discord 메시지의 이미지나 파일 첨부를 Claude에게 전달하지 않는다. 텍스트 메시지만 처리된다.
 
 ### 보안 고려사항
 
-`--dangerously-skip-permissions` 플래그는 Claude가 파일 읽기/쓰기, 명령어 실행 등 모든 도구를 사용자 승인 없이 실행할 수 있게 한다. 이는 Discord에서 대화형 승인이 불가능하기 때문에 필요한 조치이지만, 다음과 같은 위험이 존재한다:
+Discord 버튼을 통해 도구 사용을 승인/거부할 수 있지만, "모든 요청 허용하기" 모드에서는 모든 도구가 자동 승인된다. 다음과 같은 위험이 존재한다:
 
 - Claude가 시스템 파일을 수정하거나 임의의 명령어를 실행할 수 있다
 - 프롬프트 인젝션 공격에 취약할 수 있다
@@ -286,10 +294,10 @@ src/
   config.ts                 — YAML 설정 로드, CWD 경로 검증
   types.ts                  — TypeScript 인터페이스
   state.ts                  — 상태 관리 (JSON 영속화)
-  claude.ts                 — Claude CLI 실행 (JSON 출력 파싱)
+  claude.ts                 — Claude Agent SDK 실행, 권한 요청 콜백
   systemPrompt.ts           — 시스템 프롬프트 (커스터마이징 가능)
   utils.ts                  — 경로 인코딩, 고정 메시지 유틸
-  bot.ts                    — Discord 클라이언트, 이벤트 라우팅, 토큰 알림
+  bot.ts                    — Discord 클라이언트, 이벤트 라우팅, 권한 요청 UI, 토큰 알림
   commands/
     index.ts                — 슬래시 명령어 레지스트리 & 디스패처
     start.ts                — /start
@@ -298,7 +306,7 @@ src/
   channels/
     messageSender.ts        — 2000자 분할, 파일 첨부
   interactions/
-    reactionHandler.ts      — 이모지 선택지
+    reactionHandler.ts      — 번호 선택지 (버튼)
 env/                          — 환경 파일 (gitignore)
   config.yaml               — 봇 설정
   bot-state.json            — 상태 파일 (자동 생성)

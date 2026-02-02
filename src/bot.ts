@@ -3,6 +3,11 @@ import {
   GatewayIntentBits,
   ChannelType,
   PermissionFlagsBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+  MessageFlags,
   type Message,
   type TextChannel,
   type Guild,
@@ -207,7 +212,7 @@ async function checkClaudeCliStatus(): Promise<{ available: boolean; version?: s
   const testResult = await runClaude({
     prompt: "Reply with only: ok",
     cwd: config.defaultCwd,
-  });
+  }).promise;
 
   if (testResult.success) {
     return { available: true, version };
@@ -283,38 +288,163 @@ async function handleSessionMessage(
   logIO("IN", channel.name, message.author.tag, prompt);
 
   await channel.sendTyping();
-  await message.react("⏳");
+
+  // 중단 버튼 + 자동 승인 토글 버튼이 달린 대기 메시지 전송
+  let autoApprove = false;
+
+  const buildWaitingRow = () =>
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("stop_claude")
+        .setLabel("⏹ Stop")
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId("toggle_auto_approve")
+        .setLabel(autoApprove ? "🔒 모든 요청 확인하기" : "🔓 모든 요청 허용하기")
+        .setStyle(autoApprove ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    );
+
+  const waitingMsg = await message.reply({ content: "⏳ 응답을 생성하고 있습니다...", components: [buildWaitingRow()] });
 
   try {
-    // 2. Claude CLI 호출
+    // 2. Claude SDK 호출 (권한 요청 콜백 포함)
     const isResume = session.messageCount > 0;
-    const result = await runClaude({
+    const handle = runClaude({
       prompt,
       sessionId: session.sessionId,
       isResume,
       cwd: session.projectPath,
+      onPermissionRequest: async (toolName, input) => {
+        const ts = new Date().toISOString();
+        const inputPreview = JSON.stringify(input, null, 2);
+        const preview = inputPreview.length > 800
+          ? inputPreview.slice(0, 800) + "\n..."
+          : inputPreview;
+
+        // 권한 요청 로깅
+        const logPreview = inputPreview.length > 200 ? inputPreview.slice(0, 200) + "..." : inputPreview;
+        console.log(`[${ts}] [PERM_REQ] #${channel.name}: ${toolName} - ${logPreview}`);
+
+        // 자동 승인 모드
+        if (autoApprove) {
+          await channel.send({
+            content: `**🔐 권한 요청: \`${toolName}\`** → ✅ 자동 허용됨\n\`\`\`json\n${preview}\n\`\`\``,
+          });
+          console.log(`[${ts}] [PERM_RES] #${channel.name}: ${toolName} → 자동허용`);
+          return true;
+        }
+
+        // 수동 승인 모드: Discord 버튼으로 승인/거부
+        const permRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId("perm_allow")
+            .setLabel("✅ Allow")
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId("perm_deny")
+            .setLabel("❌ Deny")
+            .setStyle(ButtonStyle.Danger),
+        );
+
+        const permMsg = await channel.send({
+          content: `**🔐 권한 요청: \`${toolName}\`**\n\`\`\`json\n${preview}\n\`\`\``,
+          components: [permRow],
+        });
+
+        try {
+          const btnInteraction = await permMsg.awaitMessageComponent({
+            componentType: ComponentType.Button,
+            filter: (i) => i.customId === "perm_allow" || i.customId === "perm_deny",
+            time: 120_000,
+          });
+
+          const allowed = btnInteraction.customId === "perm_allow";
+          await btnInteraction.update({
+            content: `**🔐 권한 요청: \`${toolName}\`** → ${allowed ? "✅ 허용됨" : "❌ 거부됨"}`,
+            components: [],
+          });
+          console.log(`[${new Date().toISOString()}] [PERM_RES] #${channel.name}: ${toolName} → ${allowed ? "허용됨" : "거부됨"}`);
+          return allowed;
+        } catch {
+          // 타임아웃
+          await permMsg.edit({
+            content: `**🔐 권한 요청: \`${toolName}\`** → ⏰ 시간 초과 (거부됨)`,
+            components: [],
+          });
+          console.log(`[${new Date().toISOString()}] [PERM_RES] #${channel.name}: ${toolName} → 시간초과`);
+          return false;
+        }
+      },
     });
 
-    // 3. 메시지 카운트 증가, ⏳ 제거
+    // Stop 버튼 클릭 감지
+    let stopped = false;
+    const stopCollector = waitingMsg.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (i) => i.customId === "stop_claude",
+    }).then(async (btnInteraction) => {
+      stopped = true;
+      handle.abort();
+      await btnInteraction.update({ content: "⏹ 응답이 중단되었습니다.", components: [] });
+    }).catch(() => {});
+
+    // 자동 승인 토글 버튼 collector
+    const toggleCollector = waitingMsg.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      filter: (i) => i.customId === "toggle_auto_approve",
+    });
+    toggleCollector.on("collect", async (btnInteraction) => {
+      autoApprove = !autoApprove;
+      await btnInteraction.update({ components: [buildWaitingRow()] });
+    });
+
+    // 3. Claude 응답 대기
+    const result = await handle.promise;
+
+    // 토글 collector 정리
+    toggleCollector.stop();
+
+    if (stopped) return;
+
+    // 4. 대기 메시지 삭제
+    await waitingMsg.delete().catch(() => {});
+    void stopCollector;
+
+    // 5. 메시지 카운트 증가
     state.updateSessionMessageCount(
       session.channelId,
       session.messageCount + 1,
     );
 
-    await message.reactions.removeAll().catch(() => {});
-
     const response = result.success
       ? result.output
       : `Error: ${result.output}`;
 
-    // 4. 응답 전송
     logIO("OUT", channel.name, "Claude", response);
 
-    const sentMessages = await sendLongMessage(channel, response, {
-      replyTo: message,
-    });
+    // 6. thinking 블록이 있으면 별도 메시지로 전송
+    if (result.thinking) {
+      const thinkingText = result.thinking.length > 1900
+        ? result.thinking.slice(0, 1900) + "..."
+        : result.thinking;
+      await channel.send({
+        content: `> **Thinking**\n${thinkingText.split("\n").map(l => `> ${l}`).join("\n")}`,
+        flags: [MessageFlags.SuppressEmbeds],
+      });
+    }
 
-    // 5. 선택지 감지 → 리액션 추가 → 선택 시 재귀 호출
+    // 7. 응답을 새 메시지로 전송
+    let sentMessages: Message[];
+    if (response.length <= 2000) {
+      const msg = await channel.send({ content: response, flags: [MessageFlags.SuppressEmbeds] });
+      sentMessages = [msg];
+    } else {
+      sentMessages = await sendLongMessage(channel, response, {
+        replyTo: message,
+      });
+    }
+
+    // 8. 선택지 감지 → 버튼 추가 → 선택 시 재귀 호출
     if (result.success) {
       const lastMsg = sentMessages[sentMessages.length - 1];
       const choice = await handleChoices(response, lastMsg);
@@ -328,8 +458,8 @@ async function handleSessionMessage(
       }
     }
   } catch (err) {
-    await message.reactions.removeAll().catch(() => {});
-    await message.react("❌");
+    await waitingMsg.delete().catch(() => {});
+    await channel.send("❌ 오류가 발생했습니다.").catch(() => {});
     console.error("Error handling session message:", err);
   }
 }

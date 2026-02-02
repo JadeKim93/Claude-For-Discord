@@ -13,7 +13,6 @@ interface ConfigFile {
     model?: string | null;
     apiKey?: string | null;
     path?: string;
-    timeoutMs?: number;
     maxBudgetUsd?: string | null;
   };
   cwd: {
@@ -73,7 +72,6 @@ export const config = {
   claudePath: file.claude.path
     ? file.claude.path.replace(/^~/, os.homedir())
     : "claude",
-  claudeTimeout: file.claude.timeoutMs || 600_000,
   defaultCwd: (() => {
     const dir = (file.cwd.default || process.cwd()).replace(/^~/, os.homedir());
     if (!fs.existsSync(dir)) {

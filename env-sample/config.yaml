@@ -15,7 +15,6 @@ claude:
   model: null                    # 모델 지정 (null이면 기본값, 예: "claude-sonnet-4-20250514")
   apiKey: "your_api_key"         # Anthropic API 키 (null이면 환경변수 ANTHROPIC_API_KEY 사용)
   path: null                     # Claude CLI 경로 (null이면 PATH에서 검색)
-  timeoutMs: 600000              # CLI 타임아웃 (ms)
   maxBudgetUsd: null             # 턴당 최대 비용 (USD, 예: "1.00")
 
 # 작업 디렉토리 설정

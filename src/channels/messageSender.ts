@@ -1,4 +1,4 @@
-import { AttachmentBuilder, type Message, type TextChannel } from "discord.js";
+import { AttachmentBuilder, MessageFlags, type Message, type TextChannel } from "discord.js";
 
 const MAX_LENGTH = 2000;
 
@@ -15,8 +15,8 @@ export async function sendLongMessage(
 ): Promise<Message[]> {
   if (content.length <= MAX_LENGTH) {
     const msg = options?.replyTo
-      ? await options.replyTo.reply(content)
-      : await channel.send(content);
+      ? await options.replyTo.reply({ content, flags: [MessageFlags.SuppressEmbeds] })
+      : await channel.send({ content, flags: [MessageFlags.SuppressEmbeds] });
     return [msg];
   }
 
@@ -30,8 +30,8 @@ export async function sendLongMessage(
   });
 
   const msg = options?.replyTo
-    ? await options.replyTo.reply({ content: preview, files: [file] })
-    : await channel.send({ content: preview, files: [file] });
+    ? await options.replyTo.reply({ content: preview, files: [file], flags: [MessageFlags.SuppressEmbeds] })
+    : await channel.send({ content: preview, files: [file], flags: [MessageFlags.SuppressEmbeds] });
   return [msg];
 }
 
@@ -64,8 +64,8 @@ async function sendSplitMessages(
 
     const msg =
       isFirst && options?.replyTo
-        ? await options.replyTo.reply(chunk)
-        : await channel.send(chunk);
+        ? await options.replyTo.reply({ content: chunk, flags: [MessageFlags.SuppressEmbeds] })
+        : await channel.send({ content: chunk, flags: [MessageFlags.SuppressEmbeds] });
     messages.push(msg);
     isFirst = false;
   }

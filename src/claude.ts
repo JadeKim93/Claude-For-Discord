@@ -1,113 +1,105 @@
-import { spawn } from "child_process";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./systemPrompt.js";
-import type { ClaudeResult, ClaudeRunOptions } from "./types.js";
-
-interface ClaudeJsonResponse {
-  result?: string;
-}
+import type { ClaudeResult, ClaudeRunOptions, ClaudeRunHandle } from "./types.js";
 
 /**
- * Claude CLI를 서브프로세스로 실행하고 JSON 결과를 파싱하여 반환한다.
- * 에러 시에도 reject하지 않고 success=false로 resolve한다.
- *
- * 1. CLI 인자 조립 (--print, --output-format json, 세션/모델/예산 등)
- * 2. spawn으로 프로세스 실행 (stdin 무시, stdout/stderr 파이프)
- * 3. 타임아웃 타이머 설정 (SIGTERM → 5초 후 SIGKILL)
- * 4. 종료 시 exit code에 따라 결과 분기:
- *    - 0: JSON 파싱하여 result 필드 추출 (실패 시 raw stdout)
- *    - SIGTERM/143: 타임아웃 메시지
- *    - 기타: stderr 또는 exit code 메시지
+ * Claude Agent SDK를 사용하여 Claude를 실행하고 ClaudeRunHandle을 반환한다.
+ * - handle.promise로 결과를 대기
+ * - handle.abort()로 프로세스를 중단
+ * - options.onPermissionRequest 콜백으로 도구 사용 권한을 제어
+ * - thinking 블록을 캡처하여 결과에 포함
  */
-export function runClaude(options: ClaudeRunOptions): Promise<ClaudeResult> {
-  return new Promise((resolve) => {
-    // 1. CLI 인자 조립
-    const args = ["--print", "--output-format", "json", "--dangerously-skip-permissions"];
+export function runClaude(options: ClaudeRunOptions): ClaudeRunHandle {
+  const abortController = new AbortController();
 
-    args.push("--append-system-prompt", SYSTEM_PROMPT);
+  const promise = (async (): Promise<ClaudeResult> => {
+    try {
+      const sdkOptions: Parameters<typeof query>[0]["options"] = {
+        cwd: options.cwd || config.defaultCwd,
+        abortController,
+        systemPrompt: {
+          type: "preset" as const,
+          preset: "claude_code" as const,
+          append: SYSTEM_PROMPT,
+        },
+        permissionMode: options.onPermissionRequest ? "default" : "bypassPermissions",
+        ...(options.onPermissionRequest
+          ? {
+              canUseTool: async (
+                toolName: string,
+                input: Record<string, unknown>,
+              ) => {
+                const allowed = await options.onPermissionRequest!(toolName, input);
+                return allowed
+                  ? { behavior: "allow" as const, updatedInput: input }
+                  : { behavior: "deny" as const, message: "사용자가 권한을 거부했습니다." };
+              },
+            }
+          : {
+              allowDangerouslySkipPermissions: true,
+            }),
+        ...(config.claudeModel ? { model: config.claudeModel } : {}),
+        ...(config.claudeMaxBudget
+          ? { maxBudgetUsd: parseFloat(config.claudeMaxBudget) }
+          : {}),
+        ...(config.claudeApiKey
+          ? { env: { ...process.env, ANTHROPIC_API_KEY: config.claudeApiKey } }
+          : {}),
+        ...(options.sessionId
+          ? options.isResume
+            ? { resume: options.sessionId }
+            : { extraArgs: { "--session-id": options.sessionId } }
+          : {}),
+      };
 
-    if (options.sessionId) {
-      if (options.isResume) {
-        args.push("--resume", options.sessionId);
-      } else {
-        args.push("--session-id", options.sessionId);
-      }
-    }
+      const q = query({ prompt: options.prompt, options: sdkOptions });
 
-    if (config.claudeModel) {
-      args.push("--model", config.claudeModel);
-    }
+      let thinking = "";
+      let text = "";
 
-    if (config.claudeMaxBudget) {
-      args.push("--max-budget-usd", config.claudeMaxBudget);
-    }
-
-    args.push("-p", options.prompt);
-
-    // 2. 프로세스 실행
-    const proc = spawn(config.claudePath, args, {
-      cwd: options.cwd || config.defaultCwd,
-      env: {
-        ...process.env,
-        ...(config.claudeApiKey ? { ANTHROPIC_API_KEY: config.claudeApiKey } : {}),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    // 3. 타임아웃: SIGTERM → 5초 대기 → SIGKILL
-    const timer = setTimeout(() => {
-      proc.kill("SIGTERM");
-      setTimeout(() => {
-        if (!proc.killed) proc.kill("SIGKILL");
-      }, 5000);
-    }, config.claudeTimeout);
-
-    // 4. 종료 시 exit code에 따라 결과 분기
-    proc.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        try {
-          const json: ClaudeJsonResponse = JSON.parse(stdout);
-          resolve({
-            success: true,
-            output: json.result?.trim() || "(empty response)",
-          });
-        } catch {
-          resolve({
-            success: true,
-            output: stdout.trim() || "(empty response)",
-          });
+      for await (const msg of q) {
+        if (msg.type === "assistant" && "message" in msg) {
+          for (const block of (msg as { message: { content: Array<{ type: string; thinking?: string; text?: string }> } }).message.content) {
+            if (block.type === "thinking" && block.thinking) {
+              thinking += (thinking ? "\n" : "") + block.thinking;
+            } else if (block.type === "text" && block.text) {
+              text = block.text;
+            }
+          }
+        } else if (msg.type === "result") {
+          const resultMsg = msg as { result?: string; is_error?: boolean; errors?: string[] };
+          if (resultMsg.result) {
+            text = resultMsg.result;
+          }
+          if (resultMsg.is_error) {
+            return {
+              success: false,
+              output: resultMsg.errors?.join("\n") || text || "Unknown error",
+              thinking: thinking.trim() || undefined,
+            };
+          }
         }
-      } else if (signal === "SIGTERM" || code === 143) {
-        resolve({
-          success: false,
-          output: `Timeout: Claude did not respond within ${Math.round(config.claudeTimeout / 1000)}s`,
-        });
-      } else {
-        resolve({
-          success: false,
-          output: stderr.trim() || `Process exited with code ${code}`,
-        });
       }
-    });
 
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({
+      return {
+        success: true,
+        output: text.trim() || "(empty response)",
+        thinking: thinking.trim() || undefined,
+      };
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        return { success: false, output: "응답이 중단되었습니다." };
+      }
+      return {
         success: false,
-        output: `Failed to run claude: ${err.message}`,
-      });
-    });
-  });
+        output: `Failed to run claude: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  })();
+
+  return {
+    promise,
+    abort: () => abortController.abort(),
+  };
 }
