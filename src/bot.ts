@@ -12,6 +12,7 @@ import {
   type TextChannel,
   type Guild,
 } from "discord.js";
+import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import { config } from "./config.js";
 import { runClaude } from "./claude.js";
@@ -309,12 +310,7 @@ async function handleSessionMessage(
   try {
     // 2. Claude SDK 호출 (권한 요청 콜백 포함)
     const isResume = session.messageCount > 0;
-    const handle = runClaude({
-      prompt,
-      sessionId: session.sessionId,
-      isResume,
-      cwd: session.projectPath,
-      onPermissionRequest: async (toolName, input) => {
+    const permissionRequestHandler = async (toolName: string, input: Record<string, unknown>) => {
         const ts = new Date().toISOString();
         const inputPreview = JSON.stringify(input, null, 2);
         const preview = inputPreview.length > 800
@@ -374,7 +370,13 @@ async function handleSessionMessage(
           console.log(`[${new Date().toISOString()}] [PERM_RES] #${channel.name}: ${toolName} → 시간초과`);
           return false;
         }
-      },
+      };
+    const handle = runClaude({
+      prompt,
+      sessionId: session.sessionId,
+      isResume,
+      cwd: session.projectPath,
+      onPermissionRequest: permissionRequestHandler,
     });
 
     // Stop 버튼 클릭 감지
@@ -399,7 +401,24 @@ async function handleSessionMessage(
     });
 
     // 3. Claude 응답 대기
-    const result = await handle.promise;
+    let result = await handle.promise;
+
+    // 3-1. resume 실패 시 새 세션으로 자동 재시도
+    if (!result.success && isResume) {
+      console.log(`[RESUME_FAIL] #${channel.name}: session ${session.sessionId.slice(0, 8)} resume 실패, 새 세션으로 재시도`);
+      const newSessionId = randomUUID();
+      state.resetSession(session.channelId, newSessionId);
+      await channel.send(`⚠️ 기존 세션 복원에 실패하여 새 세션으로 재시작합니다. (\`${newSessionId.slice(0, 8)}\`)`);
+
+      const retryHandle = runClaude({
+        prompt,
+        sessionId: newSessionId,
+        isResume: false,
+        cwd: session.projectPath,
+        onPermissionRequest: permissionRequestHandler,
+      });
+      result = await retryHandle.promise;
+    }
 
     // 토글 collector 정리
     toggleCollector.stop();
@@ -411,9 +430,10 @@ async function handleSessionMessage(
     void stopCollector;
 
     // 5. 메시지 카운트 증가
+    const currentSession = state.getSessionByChannelId(session.channelId);
     state.updateSessionMessageCount(
       session.channelId,
-      session.messageCount + 1,
+      (currentSession?.messageCount ?? 0) + 1,
     );
 
     const response = result.success

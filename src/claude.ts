@@ -49,7 +49,7 @@ export function runClaude(options: ClaudeRunOptions): ClaudeRunHandle {
         ...(options.sessionId
           ? options.isResume
             ? { resume: options.sessionId }
-            : { extraArgs: { "--session-id": options.sessionId } }
+            : { extraArgs: { "session-id": options.sessionId } }
           : {}),
       };
 

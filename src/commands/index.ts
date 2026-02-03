@@ -24,7 +24,13 @@ export const commandRegistry: CommandDefinition[] = [
   {
     slash: new SlashCommandBuilder()
       .setName("start")
-      .setDescription("현재 채널에서 Claude 세션 시작 (채널 이름 = 주제)"),
+      .setDescription("현재 채널에서 Claude 세션 시작 (채널 이름 = 주제)")
+      .addBooleanOption((opt) =>
+        opt
+          .setName("force")
+          .setDescription("기존 세션을 강제로 종료하고 새로 시작")
+          .setRequired(false),
+      ) as SlashCommandBuilder,
     description: "현재 채널에서 Claude 세션 시작 (채널 이름 = 주제)",
     category: "세션",
     handler: handleStart,

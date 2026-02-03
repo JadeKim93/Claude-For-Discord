@@ -76,6 +76,16 @@ export class StateManager {
     }
   }
 
+  /** 세션 ID를 새로 발급하고 messageCount를 0으로 리셋한다. resume 실패 시 사용. */
+  resetSession(channelId: string, newSessionId: string): void {
+    const session = this.state.sessions[channelId];
+    if (session) {
+      session.sessionId = newSessionId;
+      session.messageCount = 0;
+      this.scheduleSave();
+    }
+  }
+
   /** 마지막 토큰 알림 퍼센트를 갱신한다. 중복 알림 방지용. */
   updateSessionAlertPercent(channelId: string, percent: number): void {
     const session = this.state.sessions[channelId];
